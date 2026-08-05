@@ -1,5 +1,7 @@
 # FloorPlan-GLV V1
 
+[中文 README](README_ZH.md)
+
 FloorPlan-GLV is an engineering-oriented research implementation for recognizing walls, doors, and windows in raster floor plans. It converts PNG or JPEG floor plans into deterministic, pixel-space geometry and debug artifacts.
 
 ## Scope

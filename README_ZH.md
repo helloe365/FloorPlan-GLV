@@ -1,5 +1,7 @@
 # FloorPlan-GLV V1
 
+[English README](README.md)
+
 FloorPlan-GLV 是一个面向工程验证的研究实现，用于从栅格户型图中识别墙体、门和窗。它接收 PNG 或 JPEG 户型图，输出确定性的像素坐标几何结果和调试产物。
 
 ## 项目范围
