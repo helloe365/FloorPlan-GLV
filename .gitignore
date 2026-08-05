@@ -1,0 +1,49 @@
+# Local datasets, checkpoints, and generated outputs
+/cubicasa5k/
+/data/
+/runs/
+/checkpoints/
+
+# Python caches and local build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.venv/
+/venv/
+
+# Local agent and editor state
+/.agents/
+/.codex/
+/.superpowers/
+*.log
+
+# Native and editor artifacts
+*.so
+*.o
+*.a
+*.dylib
+*.dll
+*.exe
+*.obj
+*.lib
+*.pdb
+*.dmp
+*.pch
+*.ilk
+*.manifest
+*.rsp
+*.idb
+*.suo
+*.user
+*.userprefs
+*.userprefs.meta
+*.pidb
+*.mdb
+*.sqlite
+*.sqlite3

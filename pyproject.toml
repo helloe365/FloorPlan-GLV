@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "floorplan-glv"
+version = "0.1.0"
+description = "Global-local raster floor-plan recognition"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26,<3",
+    "opencv-python-headless>=4.10,<5",
+    "pydantic>=2.10,<3",
+    "PyYAML>=6.0,<7",
+    "scikit-image>=0.24,<1",
+    "scipy>=1.14,<2",
+    "shapely>=2.0,<3",
+    "torch>=2.5,<3",
+    "torchvision>=0.20,<1",
+    "transformers>=4.46,<5",
+    "typer>=0.15,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.13,<2",
+    "pytest>=8.3,<9",
+    "ruff>=0.8,<1",
+    "tensorboard>=2.18,<3",
+    "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+floorplan-glv = "floorplan_glv.cli.app:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "model_download: opt-in checks that download and run pretrained models",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = ["docs/*.md"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]

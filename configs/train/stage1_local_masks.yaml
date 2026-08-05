@@ -1,0 +1,50 @@
+model:
+  global_enabled: false
+  global_checkpoint: nvidia/mit-b2
+  local_checkpoint: nvidia/mit-b4
+  global_size: 1024
+  patch_size: 512
+  stride: 384
+  padding_value: 255
+  output_stride: 2
+  decoder_width: 256
+train:
+  dataset_index: data/processed/train_index.jsonl
+  validation_index: data/processed/val_index.jsonl
+  output_dir: runs/train/stage1_local_masks
+  epochs: 60
+  seed: 1337
+  source_images_per_gpu: 1
+  patches_per_image: 4
+  num_workers: 4
+  gradient_accumulation_steps: 8
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  gradient_clip_norm: 1.0
+  ema_decay: 0.9998
+  precision: bf16
+  freeze_local_encoder_epochs: 0
+  gradient_checkpointing: true
+  deterministic_algorithms: true
+  learning_rates:
+    global_encoder: 0.00005
+    local_encoder: 0.00006
+    fusion: 0.00020
+    decoder: 0.00030
+    heads: 0.00060
+  loss_weights:
+    wall_mask: 2.0
+    wall_centerline: 2.0
+    wall_junction: 0.0
+    wall_orientation: 0.0
+    wall_thickness: 0.0
+    opening_mask: 2.0
+    opening_center: 3.0
+    opening_endpoint: 0.0
+    opening_type: 0.0
+    opening_orientation: 0.0
+    opening_length: 0.0
+  scheduler:
+    name: cosine
+    warmup_steps: 1500
+    min_lr_ratio: 0.01

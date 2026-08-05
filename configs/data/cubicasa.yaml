@@ -1,0 +1,17 @@
+source_root: cubicasa5k/cubicasa5k
+output_root: data/processed
+svg_filename: model.svg
+image_filename: F1_scaled.png
+split_seed: 1337
+train_fraction: 0.80
+validation_fraction: 0.10
+test_fraction: 0.10
+conversion:
+  rectangularity_threshold: 0.80
+  irregular_wall_quality: 0.70
+  irregular_opening_quality: 0.70
+  irregular_wall_min_segment_length_px: 2.0
+  host_max_distance_px: 12.0
+  host_max_distance_wall_thickness_factor: 0.75
+  host_max_angle_difference_deg: 12.0
+  host_min_projected_overlap_ratio: 0.65
