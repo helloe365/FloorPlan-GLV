@@ -1,0 +1,10 @@
+model:
+  global_enabled: false
+  global_checkpoint: nvidia/mit-b2
+  local_checkpoint: nvidia/mit-b4
+  global_size: 1024
+  patch_size: 512
+  stride: 384
+  padding_value: 255
+  output_stride: 2
+  decoder_width: 256

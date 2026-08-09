@@ -1,0 +1,36 @@
+postprocess:
+  hann_weight_floor: 0.05
+  wall:
+    mask_threshold: 0.45
+    centerline_threshold: 0.35
+    junction_threshold: 0.30
+    junction_nms_radius_px: 6
+    junction_cluster_radius_px: 8
+    min_component_area_px: 20
+    min_wall_length_px: 12.0
+    max_trace_gap_px: 5.0
+    rdp_epsilon_px: 2.0
+    split_angle_deg: 12.0
+    merge_angle_deg: 5.0
+    merge_gap_px: 8.0
+    endpoint_snap_px: 6.0
+    dominant_angle_snap_deg: 4.0
+    min_raster_support: 0.55
+  opening:
+    center_threshold: 0.30
+    center_nms_radius_px: 6
+    max_candidates: 512
+    final_confidence_threshold: 0.40
+  attachment:
+    max_distance_px: 12.0
+    max_distance_wall_thickness_factor: 0.75
+    max_angle_difference_deg: 12.0
+    min_projected_overlap_ratio: 0.65
+    distance_weight: 0.35
+    angle_weight: 0.25
+    segment_overlap_weight: 0.25
+    wall_confidence_weight: 0.15
+  opening_cleanup:
+    center_distance_mean_length_factor: 0.25
+    max_angle_difference_deg: 8.0
+    min_projected_overlap_ratio: 0.70
