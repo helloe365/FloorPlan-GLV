@@ -55,12 +55,50 @@ floorplan-glv train --config configs/train/stage3_global_local.yaml
 floorplan-glv train --config configs/train/stage4_domain_finetune.yaml
 ```
 
+### 提前停止与 checkpoint
+
+每个训练 epoch 都会使用 EMA 权重进行验证。`best.pt` 按 EMA
+`validation.total` 的最低值选出；将它用于推理以及下一阶段的
+`initial_checkpoint`。`last.pt` 保留最近完成的训练状态，只用于
+`resume_checkpoint`。批准的策略以 `min` 模式监控 `validation.total`，相对改进
+阈值为 `0.001`。
+
+| 阶段 | 耐心值 | 最少 epoch 数 |
+| --- | ---: | ---: |
+| 1：局部掩码 | 8 | 10 |
+| 2：局部几何 | 8 | 10 |
+| 3：全局—局部 | 8 | 10 |
+| 4：领域微调 | 5 | 5 |
+
+阶段 1 将 `runs/train/stage1_local_masks/last.pt` 作为
+`initial_checkpoint`，因此其旧版 schema 1.0 状态会启动新的策略和优化器。阶段
+2–4 从上一阶段的 `best.pt` 初始化。仅使用 `resume_checkpoint` 继续同一次运行。
+启用了验证但禁用了提前停止的 schema 1.0 checkpoint 只有在配置的输出目录中存在
+配对的 `best.pt` 时才能恢复；否则应将其作为 `initial_checkpoint` 启动新的运行。
+由于批准的阶段启用了提前停止，schema 1.0 checkpoint 无法精确恢复这些阶段，也必须
+作为 `initial_checkpoint` 使用。
+
 评估 checkpoint 或一对已经验证的几何结果：
 
 ```bash
 floorplan-glv evaluate --config configs/train/stage3_global_local.yaml --checkpoint /path/to/best.pt
 floorplan-glv evaluate --prediction runs/predict/sample/result.json --ground-truth /path/to/ground_truth.json
 ```
+
+评估阶段 1 掩码的确定性 epoch-0 验证 patch：
+
+```bash
+floorplan-glv evaluate-stage1 \
+  --config configs/train/stage1_local_masks.yaml \
+  --checkpoint runs/train/stage1_local_masks/last.pt \
+  --weights both \
+  --output runs/eval/stage1
+```
+
+评估会忽略无效像素，并写出 `summary.json`、`patch_metrics.jsonl`、
+`threshold_sweep.json` 和 `visualizations/*.png`；同时比较原始
+`model_state` 与 `ema_state.shadow`。这些指标仅用于描述，不是硬性的通过/失败门槛；
+整幅图的几何验收仍需单独进行。
 
 运行预测并验证导出的 JSON：
 

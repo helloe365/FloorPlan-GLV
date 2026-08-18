@@ -3,6 +3,12 @@
 /data/
 /runs/
 /checkpoints/
+cubicasa5k
+checkpoints
+runs
+tests/*
+data
+smoke*
 
 # Python caches and local build artifacts
 __pycache__/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import random
 from collections.abc import Callable, Iterable, Mapping, Sized
 from contextlib import AbstractContextManager, nullcontext
@@ -22,8 +23,14 @@ from floorplan_glv.data.collate import ModelBatch
 from floorplan_glv.losses.combined import LossReport
 from floorplan_glv.training.distributed import DistributedContext, unwrap_model
 from floorplan_glv.training.ema import ExponentialMovingAverage
+from floorplan_glv.training.progress import (
+    TRAIN_PHASE,
+    VALIDATION_PHASE,
+    BatchProgress,
+)
 
 LossFunction = Callable[[object, dict[str, torch.Tensor]], LossReport]
+BatchObserver = Callable[[BatchProgress], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +41,7 @@ class EpochReport:
     batch_count: int
     optimizer_steps: int
     global_step: int
+    skipped_steps: int = 0
 
 
 def seed_everything(seed: int, *, deterministic_algorithms: bool) -> None:
@@ -46,6 +54,24 @@ def seed_everything(seed: int, *, deterministic_algorithms: bool) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     torch.use_deterministic_algorithms(deterministic_algorithms)
+    _apply_cudnn_workaround()
+
+
+def _apply_cudnn_workaround() -> None:
+    """Disable cuDNN on Blackwell GPUs (sm_120) to avoid an illegal-memory-access
+    kernel bug in cuDNN 9.2.3 when 1x1 Conv2d projections consume SegFormer
+    hidden states.
+
+    Set ``FLOORPLAN_ALLOW_CUDNN=1`` to force cuDNN on regardless of GPU arch.
+    """
+
+    if os.environ.get("FLOORPLAN_ALLOW_CUDNN") == "1":
+        return
+    if not torch.cuda.is_available():
+        return
+    major = torch.cuda.get_device_capability(0)[0]
+    if major >= 12:  # sm_120 = Blackwell; sm_120a = Blackwell with FP8
+        torch.backends.cudnn.enabled = False
 
 
 def build_optimizer(
@@ -156,6 +182,7 @@ class TrainingEngine:
         device: torch.device,
         ema: ExponentialMovingAverage,
         context: DistributedContext | None = None,
+        on_batch: BatchObserver | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -165,6 +192,7 @@ class TrainingEngine:
         self.device = device
         self.ema = ema
         self.context = context
+        self.on_batch = on_batch
         self.global_step = 0
         self._amp_dtype, self._amp_enabled = _resolve_amp(
             device,
@@ -179,6 +207,16 @@ class TrainingEngine:
             device.type,
             enabled=scaler_enabled,
         )
+
+    @property
+    def amp_dtype(self) -> torch.dtype | None:
+        """Resolved autocast dtype, or ``None`` when autocast is disabled."""
+        return self._amp_dtype
+
+    @property
+    def amp_enabled(self) -> bool:
+        """Whether autocast wraps the forward pass."""
+        return self._amp_enabled
 
     def train_epoch(
         self,
@@ -197,6 +235,7 @@ class TrainingEngine:
         metric_sums: dict[str, float] = {}
         batch_count = 0
         optimizer_steps = 0
+        skipped_steps = 0
         accumulation_count = 0
         total_batches = len(batches) if isinstance(batches, Sized) else None
 
@@ -222,8 +261,10 @@ class TrainingEngine:
                 scaled_loss = report.total / self.config.gradient_accumulation_steps
             scaled = self.scaler.scale(scaled_loss)
             scaled.backward()  # type: ignore[no-untyped-call]
-            _accumulate_metrics(metric_sums, report)
+            batch_loss = _accumulate_metrics(metric_sums, report)
 
+            grad_norm: float | None = None
+            skipped_step = False
             if should_step:
                 self.scaler.unscale_(self.optimizer)
                 if accumulation_count < self.config.gradient_accumulation_steps:
@@ -235,9 +276,11 @@ class TrainingEngine:
                             parameter.grad.mul_(correction)
                 if local_is_frozen:
                     _clear_local_encoder_gradients(self.model)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.gradient_clip_norm,
+                grad_norm = float(
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.gradient_clip_norm,
+                    )
                 )
                 previous_scale = self.scaler.get_scale()
                 self.scaler.step(self.optimizer)
@@ -249,7 +292,25 @@ class TrainingEngine:
                     self.ema.update(unwrap_model(self.model))
                     self.global_step += 1
                     optimizer_steps += 1
+                else:
+                    skipped_steps += 1
+                    skipped_step = True
                 accumulation_count = 0
+            if self.on_batch is not None:
+                self.on_batch(
+                    BatchProgress(
+                        phase=TRAIN_PHASE,
+                        epoch=epoch,
+                        batch_index=batch_index,
+                        total_batches=total_batches,
+                        global_step=self.global_step,
+                        loss=batch_loss,
+                        running_loss=metric_sums["total"] / batch_count,
+                        learning_rate=_current_learning_rate(self.optimizer),
+                        grad_norm=grad_norm,
+                        skipped_step=skipped_step,
+                    )
+                )
 
         if batch_count == 0:
             raise ValueError("training epoch received no batches")
@@ -268,16 +329,23 @@ class TrainingEngine:
             batch_count=batch_count,
             optimizer_steps=optimizer_steps,
             global_step=self.global_step,
+            skipped_steps=skipped_steps,
         )
 
     @torch.no_grad()
-    def evaluate(self, batches: Iterable[ModelBatch]) -> EpochReport:
+    def evaluate(
+        self,
+        batches: Iterable[ModelBatch],
+        *,
+        epoch: int = 0,
+    ) -> EpochReport:
         """Evaluate one loader without mutating optimizer or EMA state."""
         was_training = self.model.training
         self.model.eval()
         metric_sums: dict[str, float] = {}
         batch_count = 0
-        for batch in batches:
+        total_batches = len(batches) if isinstance(batches, Sized) else None
+        for batch_index, batch in enumerate(batches):
             batch_count += 1
             moved = _move_batch(batch, self.device)
             with _autocast_context(
@@ -287,7 +355,22 @@ class TrainingEngine:
             ):
                 output = self.model(moved)
                 report = self.loss_function(output, moved.targets)
-            _accumulate_metrics(metric_sums, report)
+            batch_loss = _accumulate_metrics(metric_sums, report)
+            if self.on_batch is not None:
+                self.on_batch(
+                    BatchProgress(
+                        phase=VALIDATION_PHASE,
+                        epoch=epoch,
+                        batch_index=batch_index,
+                        total_batches=total_batches,
+                        global_step=self.global_step,
+                        loss=batch_loss,
+                        running_loss=metric_sums["total"] / batch_count,
+                        learning_rate=None,
+                        grad_norm=None,
+                        skipped_step=False,
+                    )
+                )
         if was_training:
             self.model.train()
         if batch_count == 0:
@@ -380,12 +463,28 @@ def _clear_local_encoder_gradients(model: nn.Module) -> None:
         parameter.grad = None
 
 
+def _current_learning_rate(optimizer: torch.optim.Optimizer) -> float | None:
+    """Return the largest active group learning rate for progress reporting."""
+    rates = [float(group["lr"]) for group in optimizer.param_groups]
+    return max(rates) if rates else None
+
+
 def _accumulate_metrics(
     sums: dict[str, float],
     report: LossReport,
-) -> None:
+) -> float:
+    """Add one batch report into ``sums`` and return its total loss."""
     values = {
         "total": float(report.total.detach().float().cpu()),
+        "mask_total": float(
+            (
+                report.weighted_losses["wall_mask"]
+                + report.weighted_losses["opening_mask"]
+            )
+            .detach()
+            .float()
+            .cpu()
+        ),
         **{
             f"raw/{name}": float(value.detach().float().cpu())
             for name, value in report.raw_losses.items()
@@ -401,6 +500,7 @@ def _accumulate_metrics(
     }
     for name, value in values.items():
         sums[name] = sums.get(name, 0.0) + value
+    return values["total"]
 
 
 def _finalize_metrics(

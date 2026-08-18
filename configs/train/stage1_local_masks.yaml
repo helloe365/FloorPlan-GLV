@@ -12,26 +12,47 @@ train:
   dataset_index: data/processed/train_index.jsonl
   validation_index: data/processed/val_index.jsonl
   output_dir: runs/train/stage1_local_masks
+  resume_checkpoint: runs/train/stage1_local_masks/last.pt
+  initial_checkpoint: null
+  initial_checkpoint_state: model
   epochs: 60
   seed: 1337
-  source_images_per_gpu: 1
+  source_images_per_gpu: 5
   patches_per_image: 4
-  num_workers: 4
+  num_workers: 10
   gradient_accumulation_steps: 8
   weight_decay: 0.01
   betas: [0.9, 0.999]
   gradient_clip_norm: 1.0
-  ema_decay: 0.9998
+  ema_decay: 0.999
   precision: bf16
   freeze_local_encoder_epochs: 0
-  gradient_checkpointing: true
-  deterministic_algorithms: true
+  gradient_checkpointing: false
+  deterministic_algorithms: false
+  early_stopping:
+    monitor: validation.mask_total
+    mode: min
+    patience: 8
+    min_delta_relative: 0.001
+    min_epochs: 10
+  augmentation:
+    enabled: true
+    horizontal_flip_prob: 0.5
+    rotation_prob: 0.75
+    scale_prob: 0.4
+    scale_min: 0.85
+    scale_max: 1.15
+    brightness_prob: 0.0
+    contrast_prob: 0.0
+    gamma_prob: 0.0
+    minimum_retained_area_ratio: 0.20
   learning_rates:
     global_encoder: 0.00005
     local_encoder: 0.00006
     fusion: 0.00020
     decoder: 0.00030
     heads: 0.00060
+  focal_alpha: 0.75
   loss_weights:
     wall_mask: 2.0
     wall_centerline: 2.0
@@ -39,12 +60,12 @@ train:
     wall_orientation: 0.0
     wall_thickness: 0.0
     opening_mask: 2.0
-    opening_center: 3.0
+    opening_center: 0.5
     opening_endpoint: 0.0
     opening_type: 0.0
     opening_orientation: 0.0
     opening_length: 0.0
   scheduler:
     name: cosine
-    warmup_steps: 1500
+    warmup_steps: 100
     min_lr_ratio: 0.01

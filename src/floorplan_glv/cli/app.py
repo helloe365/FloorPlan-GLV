@@ -23,6 +23,15 @@ from floorplan_glv.data.annotation_schema import AnnotationError
 from floorplan_glv.data.audit import inspect_dataset
 from floorplan_glv.data.collate import ModelBatch
 from floorplan_glv.data.index import prepare_cubicasa_dataset
+from floorplan_glv.evaluation import (
+    Stage1EvaluationError,
+    Stage1EvaluationOptions,
+    WeightSelection,
+    write_stage1_artifacts,
+)
+from floorplan_glv.evaluation import (
+    evaluate_stage1 as evaluate_stage1_masks,
+)
 from floorplan_glv.geometry.primitives import GeometryError
 from floorplan_glv.metrics.geometry import GeometryMetricReport, evaluate_geometry
 from floorplan_glv.models import types as model_types
@@ -624,3 +633,58 @@ def evaluate(
         raise typer.Exit(code=1) from exc
     payload = report if isinstance(report, dict) else report.as_dict()
     typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+@app.command("evaluate-stage1")
+def evaluate_stage1_command(
+    config: ConfigPath,
+    checkpoint: ReadableFile,
+    output: OutputDirectory,
+    weights: Annotated[str, typer.Option("--weights")] = "both",
+    wall_threshold: Annotated[float, typer.Option("--wall-threshold")] = 0.45,
+    opening_threshold: Annotated[float, typer.Option("--opening-threshold")] = 0.50,
+    threshold_min: Annotated[float, typer.Option("--threshold-min")] = 0.30,
+    threshold_max: Annotated[float, typer.Option("--threshold-max")] = 0.70,
+    threshold_step: Annotated[float, typer.Option("--threshold-step")] = 0.05,
+    visual_samples: Annotated[int, typer.Option("--visual-samples")] = 12,
+) -> None:
+    """Evaluate deterministic epoch-0 Stage 1 validation patches."""
+    try:
+        options = Stage1EvaluationOptions(
+            weights=cast(WeightSelection, weights),
+            wall_threshold=wall_threshold,
+            opening_threshold=opening_threshold,
+            threshold_min=threshold_min,
+            threshold_max=threshold_max,
+            threshold_step=threshold_step,
+            visual_samples=visual_samples,
+        )
+        result = evaluate_stage1_masks(
+            config,
+            checkpoint,
+            output,
+            options=options,
+        )
+        artifact_paths = write_stage1_artifacts(result, output)
+    except (
+        Stage1EvaluationError,
+        ConfigurationError,
+        AnnotationError,
+        CheckpointError,
+        OSError,
+    ) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    receipt = {
+        "artifacts": {
+            name: str(artifact_paths[name])
+            for name in ("summary", "patch_metrics", "threshold_sweep")
+        },
+        "output": str(output),
+        "status": "complete",
+        "weights": options.weights,
+    }
+    typer.echo(
+        json.dumps(receipt, sort_keys=True, allow_nan=False, separators=(",", ":"))
+    )
