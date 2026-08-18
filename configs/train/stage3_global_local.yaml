@@ -12,7 +12,7 @@ train:
   dataset_index: data/processed/train_index.jsonl
   validation_index: data/processed/val_index.jsonl
   output_dir: runs/train/stage3_global_local
-  initial_checkpoint: runs/train/stage2_local_geometry/last.pt
+  initial_checkpoint: runs/train/stage2_local_geometry/best.pt
   epochs: 40
   seed: 1337
   source_images_per_gpu: 4
@@ -22,11 +22,28 @@ train:
   weight_decay: 0.01
   betas: [0.9, 0.999]
   gradient_clip_norm: 1.0
-  ema_decay: 0.9998
+  ema_decay: 0.9985
   precision: bf16
   freeze_local_encoder_epochs: 5
   gradient_checkpointing: false
   deterministic_algorithms: false
+  early_stopping:
+    monitor: validation.total
+    mode: min
+    patience: 8
+    min_delta_relative: 0.001
+    min_epochs: 10
+  augmentation:
+    enabled: true
+    horizontal_flip_prob: 0.5
+    rotation_prob: 0.75
+    scale_prob: 0.4
+    scale_min: 0.85
+    scale_max: 1.15
+    brightness_prob: 0.0
+    contrast_prob: 0.0
+    gamma_prob: 0.0
+    minimum_retained_area_ratio: 0.20
   learning_rates:
     global_encoder: 0.00005
     local_encoder: 0.00001
@@ -35,5 +52,5 @@ train:
     heads: 0.00015
   scheduler:
     name: cosine
-    warmup_steps: 1500
+    warmup_steps: 100
     min_lr_ratio: 0.01

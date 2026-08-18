@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, cast
 
@@ -193,8 +193,8 @@ def compute_losses(
         valid_pixels,
     )
 
-    raw_losses = {
-        "wall_mask": binary_mask_loss(
+    loss_functions: dict[str, Callable[[], torch.Tensor]] = {
+        "wall_mask": lambda: binary_mask_loss(
             output["wall_mask_logits"],
             targets["wall_mask"],
             valid_pixels,
@@ -202,7 +202,7 @@ def compute_losses(
             focal_gamma=config.focal_gamma,
             dice_smooth=config.dice_smooth,
         ),
-        "wall_centerline": centerline_loss(
+        "wall_centerline": lambda: centerline_loss(
             output["wall_centerline_logits"],
             targets["wall_centerline"],
             valid_pixels,
@@ -211,27 +211,27 @@ def compute_losses(
             dice_smooth=config.dice_smooth,
             cldice_iterations=config.cldice_iterations,
         ),
-        "wall_junction": centernet_focal_loss(
+        "wall_junction": lambda: centernet_focal_loss(
             output["wall_junction_logits"],
             targets["wall_junction"],
             valid_pixels,
             alpha=config.centernet_alpha,
             beta=config.centernet_beta,
         ),
-        "wall_orientation": orientation_loss(
+        "wall_orientation": lambda: orientation_loss(
             output["wall_orientation_raw"],
             targets["wall_orientation"],
             wall_orientation_valid,
             unit_penalty_weight=config.orientation_unit_penalty_weight,
             smooth_l1_beta=config.smooth_l1_beta,
         ),
-        "wall_thickness": masked_smooth_l1_loss(
+        "wall_thickness": lambda: masked_smooth_l1_loss(
             output["wall_log_half_thickness"],
             targets["wall_log_half_thickness"],
             wall_thickness_valid,
             beta=config.smooth_l1_beta,
         ),
-        "opening_mask": binary_mask_loss(
+        "opening_mask": lambda: binary_mask_loss(
             output["opening_mask_logits"],
             targets["opening_mask"],
             valid_pixels,
@@ -239,39 +239,53 @@ def compute_losses(
             focal_gamma=config.focal_gamma,
             dice_smooth=config.dice_smooth,
         ),
-        "opening_center": centernet_focal_loss(
+        "opening_center": lambda: centernet_focal_loss(
             output["opening_center_logits"],
             targets["opening_center"],
             valid_pixels,
             alpha=config.centernet_alpha,
             beta=config.centernet_beta,
         ),
-        "opening_endpoint": centernet_focal_loss(
+        "opening_endpoint": lambda: centernet_focal_loss(
             output["opening_endpoint_logits"],
             targets["opening_endpoint"],
             valid_pixels,
             alpha=config.centernet_alpha,
             beta=config.centernet_beta,
         ),
-        "opening_type": masked_cross_entropy_loss(
+        "opening_type": lambda: masked_cross_entropy_loss(
             output["opening_type_logits"],
             targets["opening_type"],
             opening_type_valid,
             class_weights=config.opening_type_class_weights,
         ),
-        "opening_orientation": orientation_loss(
+        "opening_orientation": lambda: orientation_loss(
             output["opening_orientation_raw"],
             targets["opening_orientation"],
             opening_orientation_valid,
             unit_penalty_weight=config.orientation_unit_penalty_weight,
             smooth_l1_beta=config.smooth_l1_beta,
         ),
-        "opening_length": masked_smooth_l1_loss(
+        "opening_length": lambda: masked_smooth_l1_loss(
             output["opening_log_half_length"],
             targets["opening_log_half_length"],
             opening_length_valid,
             beta=config.smooth_l1_beta,
         ),
+    }
+    enabled_tasks = tuple(
+        task_name
+        for task_name in TASK_NAMES
+        if float(getattr(config.weights, task_name)) > 0.0
+    )
+    if not enabled_tasks:
+        raise ValueError("at least one task loss weight must be positive")
+    zero_loss = next(iter(output_mapping.values())).float().new_zeros(())
+    raw_losses = {
+        task_name: loss_functions[task_name]()
+        if task_name in enabled_tasks
+        else zero_loss.clone()
+        for task_name in TASK_NAMES
     }
     for task_name, loss in raw_losses.items():
         if loss.dtype != torch.float32:

@@ -12,7 +12,7 @@ train:
   dataset_index: data/processed/train_index.jsonl
   validation_index: data/processed/val_index.jsonl
   output_dir: runs/train/stage4_domain_finetune
-  initial_checkpoint: runs/train/stage3_global_local/last.pt
+  initial_checkpoint: runs/train/stage3_global_local/best.pt
   epochs: 20
   seed: 1337
   source_images_per_gpu: 1
@@ -28,6 +28,23 @@ train:
   gradient_checkpointing: false
   deterministic_algorithms: true
   hard_negative_mining: true
+  early_stopping:
+    monitor: validation.total
+    mode: min
+    patience: 5
+    min_delta_relative: 0.001
+    min_epochs: 5
+  augmentation:
+    enabled: true
+    horizontal_flip_prob: 0.5
+    rotation_prob: 0.75
+    scale_prob: 0.4
+    scale_min: 0.85
+    scale_max: 1.15
+    brightness_prob: 0.0
+    contrast_prob: 0.0
+    gamma_prob: 0.0
+    minimum_retained_area_ratio: 0.20
   learning_rates:
     global_encoder: 0.000005
     local_encoder: 0.000005

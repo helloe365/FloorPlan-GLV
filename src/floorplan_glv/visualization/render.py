@@ -13,11 +13,11 @@ from floorplan_glv.data.output_schema import FloorPlanResult, Segment
 from floorplan_glv.geometry.primitives import GeometryError
 from floorplan_glv.postprocess.openings import OpeningCandidate
 
-_WALL_COLOR = (30, 110, 220)
-_WALL_BAND_COLOR = (210, 225, 245)
+_WALL_COLOR = (0, 0, 0)
+_WALL_BAND_COLOR = (0, 0, 0)
 _NODE_COLOR = (220, 40, 40)
-_DOOR_COLOR = (30, 170, 70)
-_WINDOW_COLOR = (20, 150, 220)
+_DOOR_COLOR = (0, 180, 0)
+_WINDOW_COLOR = (0, 0, 220)
 _DROP_COLOR = (220, 30, 180)
 _TEXT_COLOR = (20, 20, 20)
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -28,20 +28,40 @@ def render_debug_images(
     result: FloorPlanResult,
     *,
     dropped_openings: Sequence[OpeningCandidate] = (),
+    show_annotations: bool = True,
 ) -> dict[str, np.ndarray]:
     """Render deterministic RGB wall, opening, and combined debug images."""
     source = _validated_source_image(image, result)
     wall_graph = source.copy()
     openings = source.copy()
     overlay = source.copy()
-    _draw_walls(wall_graph, result)
-    _draw_walls(overlay, result)
-    _draw_openings(openings, result, dropped_openings)
-    _draw_openings(overlay, result, dropped_openings)
+    prediction_only = np.full_like(source, 255)
+    _draw_walls(wall_graph, result, show_annotations=show_annotations)
+    _draw_walls(overlay, result, show_annotations=show_annotations)
+    _draw_openings(
+        openings,
+        result,
+        dropped_openings,
+        show_annotations=show_annotations,
+    )
+    _draw_openings(
+        overlay,
+        result,
+        dropped_openings,
+        show_annotations=show_annotations,
+    )
+    _draw_walls(prediction_only, result, show_annotations=show_annotations)
+    _draw_openings(
+        prediction_only,
+        result,
+        dropped_openings,
+        show_annotations=show_annotations,
+    )
     return {
         "wall_graph.png": wall_graph,
         "openings.png": openings,
         "overlay.png": overlay,
+        "prediction_only.png": prediction_only,
     }
 
 
@@ -51,12 +71,14 @@ def write_debug_visualizations(
     destination: Path,
     *,
     dropped_openings: Sequence[OpeningCandidate] = (),
+    show_annotations: bool = True,
 ) -> dict[str, Path]:
     """Write byte-deterministic PNG debug images and return their paths."""
     rendered = render_debug_images(
         image,
         result,
         dropped_openings=dropped_openings,
+        show_annotations=show_annotations,
     )
     destination.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, Path] = {}
@@ -93,7 +115,12 @@ def _validated_source_image(
     return image.copy()
 
 
-def _draw_walls(canvas: np.ndarray, result: FloorPlanResult) -> None:
+def _draw_walls(
+    canvas: np.ndarray,
+    result: FloorPlanResult,
+    *,
+    show_annotations: bool,
+) -> None:
     for wall in result.walls:
         polygon = _segment_band(wall.segment, wall.thickness_px)
         cv2.fillConvexPoly(canvas, polygon, _WALL_BAND_COLOR, lineType=cv2.LINE_8)
@@ -105,26 +132,30 @@ def _draw_walls(canvas: np.ndarray, result: FloorPlanResult) -> None:
             2,
             cv2.LINE_8,
         )
-        midpoint = _midpoint(wall.segment)
-        _label(
-            canvas,
-            f"{wall.id} {wall.confidence:.2f}",
-            (midpoint[0] + 2, midpoint[1] - 4),
-        )
-    for node in result.nodes:
-        point = _point(node.point)
-        cv2.circle(canvas, point, 3, _NODE_COLOR, -1, cv2.LINE_8)
-        _label(
-            canvas,
-            f"{node.id} {node.confidence:.2f}",
-            (point[0] + 3, point[1] + 10),
-        )
+        if show_annotations:
+            midpoint = _midpoint(wall.segment)
+            _label(
+                canvas,
+                f"{wall.id} {wall.confidence:.2f}",
+                (midpoint[0] + 2, midpoint[1] - 4),
+            )
+    if show_annotations:
+        for node in result.nodes:
+            point = _point(node.point)
+            cv2.circle(canvas, point, 3, _NODE_COLOR, -1, cv2.LINE_8)
+            _label(
+                canvas,
+                f"{node.id} {node.confidence:.2f}",
+                (point[0] + 3, point[1] + 10),
+            )
 
 
 def _draw_openings(
     canvas: np.ndarray,
     result: FloorPlanResult,
     dropped_openings: Sequence[OpeningCandidate],
+    *,
+    show_annotations: bool,
 ) -> None:
     for opening in result.openings:
         color = _DOOR_COLOR if opening.type == "door" else _WINDOW_COLOR
@@ -138,14 +169,15 @@ def _draw_openings(
         )
         center = _point(opening.center)
         cv2.circle(canvas, center, 3, color, -1, cv2.LINE_8)
-        _label(
-            canvas,
-            (
-                f"{opening.id} {opening.type} {opening.host_wall_id} "
-                f"{opening.confidence:.2f}"
-            ),
-            (center[0] + 3, center[1] - 5),
-        )
+        if show_annotations:
+            _label(
+                canvas,
+                (
+                    f"{opening.id} {opening.type} {opening.host_wall_id} "
+                    f"{opening.confidence:.2f}"
+                ),
+                (center[0] + 3, center[1] - 5),
+            )
     for candidate in dropped_openings:
         center = _point(candidate.center.as_tuple())
         if candidate.segment is not None:
@@ -173,12 +205,13 @@ def _draw_openings(
             2,
             cv2.LINE_8,
         )
-        _label(
-            canvas,
-            f"dropped: {candidate.drop_reason or 'unknown'}",
-            (center[0] + 4, center[1] + 12),
-            color=_DROP_COLOR,
-        )
+        if show_annotations:
+            _label(
+                canvas,
+                f"dropped: {candidate.drop_reason or 'unknown'}",
+                (center[0] + 4, center[1] + 12),
+                color=_DROP_COLOR,
+            )
 
 
 def _segment_band(segment: Segment, thickness_px: float) -> np.ndarray:

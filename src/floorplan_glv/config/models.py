@@ -9,6 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Probability = Annotated[float, Field(ge=0.0, le=1.0)]
+RelativeDelta = Annotated[float, Field(ge=0.0, lt=1.0, allow_inf_nan=False)]
 PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
 PositiveInt = Annotated[int, Field(gt=0)]
 NonnegativeInt = Annotated[int, Field(ge=0)]
@@ -85,6 +86,18 @@ class SchedulerConfig(StrictConfigModel):
     min_lr_ratio: Probability = 0.01
 
 
+class EarlyStoppingConfig(StrictConfigModel):
+    """EMA validation-loss plateau policy."""
+
+    monitor: Literal["validation.total", "validation.mask_total"] = (
+        "validation.total"
+    )
+    mode: Literal["min"] = "min"
+    patience: PositiveInt = 8
+    min_delta_relative: RelativeDelta = 0.001
+    min_epochs: NonnegativeInt = 10
+
+
 class LearningRateConfig(StrictConfigModel):
     """Discriminative learning rates for the five trainable model sections."""
 
@@ -111,6 +124,61 @@ class TrainingLossWeights(StrictConfigModel):
     opening_length: Annotated[float, Field(ge=0.0, allow_inf_nan=False)] = 0.75
 
 
+class AugmentationConfig(StrictConfigModel):
+    """Stochastic training-time augmentation policy.
+
+    Geometric ops (D4 orientation + uniform scale) are composed into a single
+    affine and applied via ``apply_transform`` so image pixels and vector
+    annotations stay synchronized. Photometric ops (brightness, contrast, gamma)
+    act on the image only and do not affect annotations.
+
+    ``horizontal_flip_prob`` and ``rotation_prob`` together generate the D4
+    group: when a rotation fires its quarter-turn count is drawn uniformly from
+    ``{1, 2, 3}``, so ``rotation_prob=0.75`` makes all four orientations
+    equiprobable and ``rotation_prob=0.0`` disables rotation entirely.
+
+    Photometric probabilities default to ``0.0``: floor plans are white-dominant
+    line art whose ink is already near-saturated black, so brightness/contrast
+    jitter mostly perturbs background and costs more time than the geometric
+    pass. Set them above zero to opt back in.
+    """
+
+    enabled: bool = True
+    # D4 orientation
+    horizontal_flip_prob: Probability = 0.5
+    rotation_prob: Probability = 0.75
+    # Geometric scale
+    scale_prob: Probability = 0.4
+    scale_min: PositiveFloat = 0.85
+    scale_max: PositiveFloat = 1.15
+    # Photometric (image-only), disabled by default
+    brightness_prob: Probability = 0.0
+    brightness_range: tuple[PositiveFloat, PositiveFloat] = (0.85, 1.15)
+    contrast_prob: Probability = 0.0
+    contrast_range: tuple[PositiveFloat, PositiveFloat] = (0.85, 1.15)
+    gamma_prob: Probability = 0.0
+    gamma_range: tuple[PositiveFloat, PositiveFloat] = (0.85, 1.15)
+    # Geometry filtering (passed to GeometricTransform)
+    minimum_retained_area_ratio: Probability = 0.20
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> Self:
+        """Require non-empty intervals for all sampled ranges."""
+        for field_name in (
+            "brightness_range",
+            "contrast_range",
+            "gamma_range",
+        ):
+            low, high = getattr(self, field_name)
+            if low > high:
+                raise ValueError(
+                    f"{field_name} lower bound must not exceed upper bound"
+                )
+        if self.scale_min > self.scale_max:
+            raise ValueError("scale_min must not exceed scale_max")
+        return self
+
+
 class TrainConfig(StrictConfigModel):
     """Validated optimizer, batching, precision, and run settings."""
 
@@ -118,6 +186,7 @@ class TrainConfig(StrictConfigModel):
     validation_index: Path | None = None
     output_dir: Path = Path("runs/train")
     initial_checkpoint: Path | None = None
+    initial_checkpoint_state: Literal["ema", "model"] = "ema"
     resume_checkpoint: Path | None = None
     epochs: PositiveInt = 60
     seed: NonnegativeInt = 1337
@@ -135,8 +204,11 @@ class TrainConfig(StrictConfigModel):
     deterministic_algorithms: bool = True
     hard_negative_mining: bool = False
     log_interval: NonnegativeInt = 10
+    early_stopping: EarlyStoppingConfig | None = None
+    augmentation: AugmentationConfig = Field(default_factory=AugmentationConfig)
     learning_rates: LearningRateConfig = Field(default_factory=LearningRateConfig)
     loss_weights: TrainingLossWeights = Field(default_factory=TrainingLossWeights)
+    focal_alpha: Probability = 0.25
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
 
     @field_validator("betas")
@@ -156,6 +228,15 @@ class TrainConfig(StrictConfigModel):
             raise ValueError(
                 "initial_checkpoint and resume_checkpoint are mutually exclusive"
             )
+        if not any(
+            weight > 0.0 for weight in self.loss_weights.model_dump().values()
+        ):
+            raise ValueError("at least one loss weight must be positive")
+        if self.early_stopping is not None:
+            if self.validation_index is None:
+                raise ValueError("early_stopping requires validation_index")
+            if self.early_stopping.min_epochs >= self.epochs:
+                raise ValueError("early_stopping.min_epochs must be less than epochs")
         return self
 
 

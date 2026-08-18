@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import TypedDict, cast
 
 import torch
@@ -50,6 +51,70 @@ class ExponentialMovingAverage:
     def copy_to(self, model: nn.Module) -> None:
         """Copy the averaged state into ``model`` strictly."""
         model.load_state_dict(self._shadow, strict=True)
+
+    def _validate_model_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:
+        """Return a model state only when it matches the EMA tensor contract."""
+        current = model.state_dict()
+        if set(current) != set(self._shadow):
+            raise ValueError("EMA model state keys do not match")
+        seen_storages: dict[tuple[torch.device, int], str] = {}
+        for name, value in current.items():
+            shadow = self._shadow[name]
+            if shadow.shape != value.shape or shadow.dtype != value.dtype:
+                raise ValueError(f"EMA tensor contract changed for {name}")
+            if value.numel() == 0:
+                continue
+            storage_key = (value.device, value.untyped_storage().data_ptr())
+            aliased_name = seen_storages.get(storage_key)
+            if aliased_name is not None:
+                raise ValueError(
+                    f"EMA model state tensors {aliased_name} and {name} are aliased"
+                )
+            seen_storages[storage_key] = name
+        return current
+
+    @torch.no_grad()
+    def _swap_with_model(self, model: nn.Module) -> None:
+        """Swap EMA and model tensors with one temporary tensor at a time."""
+        current = self._validate_model_state(model)
+        swapped: list[str] = []
+        try:
+            for name, value in current.items():
+                shadow = self._shadow[name]
+                temporary = value.detach().clone()
+                copied_to_model = False
+                try:
+                    value.copy_(shadow)
+                    copied_to_model = True
+                    shadow.copy_(temporary)
+                except BaseException:
+                    if copied_to_model:
+                        shadow.copy_(value)
+                        value.copy_(temporary)
+                    raise
+                finally:
+                    del temporary
+                swapped.append(name)
+        except BaseException:
+            for name in reversed(swapped):
+                value = current[name]
+                shadow = self._shadow[name]
+                temporary = value.detach().clone()
+                try:
+                    value.copy_(shadow)
+                    shadow.copy_(temporary)
+                finally:
+                    del temporary
+            raise
+
+    @contextmanager
+    def average_parameters(self, model: nn.Module) -> Iterator[None]:
+        """Temporarily expose EMA tensors on ``model`` for evaluation."""
+        self._swap_with_model(model)
+        try:
+            yield
+        finally:
+            self._swap_with_model(model)
 
     def state_dict(self) -> EMAState:
         """Return a detached checkpoint-safe EMA state."""

@@ -363,11 +363,36 @@ class TrainingReporter:
             f"-> {path}"
         )
 
+    def early_stopping_progress(
+        self,
+        *,
+        monitor: str,
+        value: float,
+        best_value: float,
+        best_epoch: int,
+        bad_epochs: int,
+        patience: int,
+    ) -> None:
+        """Report the latest early-stopping decision state."""
+        self._write_line(
+            f"[early-stop] {monitor}={value:.6f} best={best_value:.6f} "
+            f"epoch={best_epoch + 1} no-improve={bad_epochs}/{patience}"
+        )
+
+    def early_stopping_triggered(self, *, epoch: int, best_epoch: int) -> None:
+        """Report that early stopping ended the training loop."""
+        self._write_line(
+            f"[early-stop] stopping at epoch {epoch + 1}; "
+            f"best epoch {best_epoch + 1}"
+        )
+
     def run_end(
         self,
         *,
+        selected_checkpoint: Path,
         last_checkpoint: Path,
         best_metrics: Mapping[str, float],
+        stopped_early: bool,
     ) -> None:
         """Print the final run summary."""
         elapsed = time.monotonic() - self._run_start
@@ -375,7 +400,10 @@ class TrainingReporter:
         self._write_line(f"Training finished in {format_duration(elapsed)}")
         for name in sorted(best_metrics):
             self._write_line(f"  best {name:<17} {best_metrics[name]:.6f}")
-        self._write_line(f"  checkpoint        {last_checkpoint}")
+        self._write_line(f"  selected checkpoint {selected_checkpoint}")
+        self._write_line(f"  resume checkpoint   {last_checkpoint}")
+        reason = "early stopping" if stopped_early else "epoch limit"
+        self._write_line(f"  completion reason   {reason}")
         self._write_line(_HEADER_RULE)
 
 

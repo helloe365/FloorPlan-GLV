@@ -476,6 +476,15 @@ def _accumulate_metrics(
     """Add one batch report into ``sums`` and return its total loss."""
     values = {
         "total": float(report.total.detach().float().cpu()),
+        "mask_total": float(
+            (
+                report.weighted_losses["wall_mask"]
+                + report.weighted_losses["opening_mask"]
+            )
+            .detach()
+            .float()
+            .cpu()
+        ),
         **{
             f"raw/{name}": float(value.detach().float().cpu())
             for name, value in report.raw_losses.items()

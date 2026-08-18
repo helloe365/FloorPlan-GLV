@@ -55,12 +55,54 @@ floorplan-glv train --config configs/train/stage3_global_local.yaml
 floorplan-glv train --config configs/train/stage4_domain_finetune.yaml
 ```
 
+### Early stopping and checkpoints
+
+Each training epoch validates the EMA weights. `best.pt` is selected by the
+lowest EMA `validation.total`; use it for inference and as the next stage's
+`initial_checkpoint`. `last.pt` retains the most recently completed training
+state and is for `resume_checkpoint` only. The approved policy monitors
+`validation.total` in `min` mode with a relative improvement threshold of
+`0.001`.
+
+| Stage | Patience | Minimum epochs |
+| --- | ---: | ---: |
+| 1: local masks | 8 | 10 |
+| 2: local geometry | 8 | 10 |
+| 3: global-local | 8 | 10 |
+| 4: domain fine-tune | 5 | 5 |
+
+Stage 1 uses `runs/train/stage1_local_masks/last.pt` as an
+`initial_checkpoint`, so its legacy schema 1.0 state starts a fresh
+policy/optimizer. Stages 2–4 initialize from the preceding stage's `best.pt`.
+Use `resume_checkpoint` only to continue the same run. A schema 1.0 checkpoint
+with validation enabled and early stopping disabled can resume only if the
+configured output directory contains the paired `best.pt`; otherwise use it
+as an `initial_checkpoint` for a fresh run. The approved stages enable early
+stopping, so schema 1.0 checkpoints cannot resume them exactly. They must be
+used as `initial_checkpoint` values.
+
 Evaluate a checkpoint or a pair of validated geometry results:
 
 ```bash
 floorplan-glv evaluate --config configs/train/stage3_global_local.yaml --checkpoint /path/to/best.pt
 floorplan-glv evaluate --prediction runs/predict/sample/result.json --ground-truth /path/to/ground_truth.json
 ```
+
+Evaluate the deterministic epoch-0 validation patches for Stage 1 masks:
+
+```bash
+floorplan-glv evaluate-stage1 \
+  --config configs/train/stage1_local_masks.yaml \
+  --checkpoint runs/train/stage1_local_masks/last.pt \
+  --weights both \
+  --output runs/eval/stage1
+```
+
+The evaluator ignores invalid pixels and writes `summary.json`,
+`patch_metrics.jsonl`, `threshold_sweep.json`, and `visualizations/*.png`.
+It compares raw `model_state` with `ema_state.shadow`. These metrics are
+descriptive, not a hard pass/fail gate; full-image geometry acceptance remains
+separate.
 
 Run prediction and validate the exported JSON:
 
